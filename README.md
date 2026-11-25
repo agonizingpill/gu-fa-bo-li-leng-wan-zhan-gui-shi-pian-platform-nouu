@@ -8,7 +8,8 @@
 
 - 弯模与行程 `jigs`，字段为 `spread`（台面跨度 mm）、`max_throw`（最大行程 mm）、`calibrated`（量具在校）。模型约束位于 `backend/domain/jigs_model.py`，规则位于 `jigs_service.py`。
 - 温区试片 `coupons`，字段为 `jig`（弯模）、`heat`（保温温度 °C）、`thick`（片厚 mm）、`target`（目标弯度 mm）、`measured`（冷却弯度 mm）、`locked`（已确认）。模型约束位于 `backend/domain/coupons_model.py`，规则位于 `coupons_service.py`。
-- 预测曲线签注 `profiles`，字段为 `coupon`（基准试片）、`prediction`（拟合弯度 mm）、`mae`（留出 MAE mm）、`curve`（改善说明）、`token`（拟合编号）。模型约束位于 `backend/domain/profiles_model.py`，规则位于 `profiles_service.py`。
+- 预测曲线签注 `profiles`，字段为 `coupon`（基准试片）、`prediction`（拟合弯度 mm）、`mae`（留出 MAE mm）、`curve`（改善说明，签注时固化完整拟合管线）、`token`（拟合编号）。模型约束位于 `backend/domain/profiles_model.py`，规则位于 `profiles_service.py`。
+- 炉温倒查单 `heat_lookups`，字段为 `profile`（曲线版本）、`thick`（片厚 mm）、`target`（工艺目标弯度 mm）、`measured`（成品弯度 mm）、`heat`（反查炉温，无解留空）、`candidates`（训练温区内的全部候选炉温）、`usual_heat`（常用炉温）、`state`（状态）、`reason`（无解说明）。反查算子位于 `backend/domain/inverse.py`，规则位于 `heat_lookups_service.py`。
 - 试制工位委托 `work_orders`，字段为 `profile`（依据）、`jig`（工位弯模）、`slot`（机位时段）、`quantity`（试片数）、`state`（状态）。模型约束位于 `backend/domain/work_orders_model.py`，规则位于 `work_orders_service.py`。
 
 团队为模拟的6 人打样组，负责展柜旧式玻璃的冷弯样件。
@@ -54,9 +55,21 @@ Compose 运行 Nginx、Python FastAPI、独立 Redis 消费进程、SQL 数据�
 | 弯模与行程 | `/jigs` /jigs/calibrate | `frontend/src/pages/jigs.js` |
 | 温区试片 | `/coupons` /coupons/record-coupon，/coupons/witness | `frontend/src/pages/coupons.js` |
 | 预测曲线签注 | `/profiles` /profiles/fit-curve，/profiles/sign-profile | `frontend/src/pages/profiles.js` |
+| 炉温倒查单 | `/heat_lookups` /heat_lookups/lookup，/heat_lookups/confirm | `frontend/src/pages/heat_lookups.js` |
 | 试制工位委托 | `/work_orders` /work_orders/book-jig，/work_orders/complete | `frontend/src/pages/work_orders.js` |
 
 SQL 实体与约束在 `backend/domain` 下维护。前端使用原生 ES modules。核心算子为 PolynomialFeatures + Lasso。算法按温度排序每四条留出一条；训练拟合二次多项式和标准化。报告使用 mm 和可复现特征系数。
+
+### 炉温倒查规则
+
+展柜只给成品弯度，试制员在曲线工作台按片厚、工艺目标和成品弯度反查炉温：
+
+1. 只接受**签注时已固化完整拟合参数**的曲线。计算记录（Redis 任务，默认 24 小时过期）过期后仍可按签注曲线反查；缺参数的老曲线（如演示 `PRO-11`）只供查阅，提交倒查会被拒绝。
+2. 固定片厚与工艺目标后，预测弯度关于炉温是二次函数，`domain/inverse.py` 求解析根，只保留落在**训练温区** `train_heat_min ~ train_heat_max` 内的炉根。
+3. 温区内有多解时，挑离**常用炉温**（训练折炉温均值 `usual_heat`）最近的；等距取较低炉温。全部候选根保留在 `candidates` 中。
+4. 温区内无解时 `heat` 留空、状态置为「无炉温」，不给炉温，也不允许确认。
+5. 倒查单号是幂等键：同编号重试返回原单、不新增记录；同编号携带不同参数返回 409。
+6. 确认时对倒查单行加锁，先确认者把状态置为「已确认」，炉温与曲线版本随之冻结；并发或重复确认返回 409，以首次确认结果为准。
 
 数据为模拟试制记录。工单留在本地数据库供核查。
 

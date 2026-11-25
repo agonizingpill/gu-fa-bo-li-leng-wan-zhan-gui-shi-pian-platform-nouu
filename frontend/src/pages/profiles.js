@@ -26,7 +26,10 @@
     },
     {
       "name": "curve",
-      "label": "改善说明"
+      "label": "改善说明",
+      "format": (curve) => curve && curve.fitted
+        ? `${curve.terms.length} 项特征 · 留出 ${curve.held_out} · 含倒查参数`
+        : curve
     },
     {
       "name": "token",

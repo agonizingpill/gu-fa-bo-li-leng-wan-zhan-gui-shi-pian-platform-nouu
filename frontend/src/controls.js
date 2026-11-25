@@ -43,6 +43,9 @@ export function actionForm(action, refresh) {
         });
         if (result.status === 'rejected') throw new Error(result.detail);
         notice.textContent = '任务 ' + data.token + ' · ' + display(result.result);
+      } else if (data.heat === null) {
+        notice.textContent = action.success + ' · ' + display(data.code) + '：训练温区内无解，不给炉温'
+          + (data.reason ? '（' + data.reason + '）' : '');
       } else {
         notice.textContent = action.success + ' · ' + display(data.code ?? data.status);
       }
